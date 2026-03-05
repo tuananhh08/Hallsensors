@@ -283,7 +283,7 @@ def main():
             X_b = X_b.to(device, non_blocking=True)
             Y_b = Y_b.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
-            with torch.cuda.amp.autocast(enabled=use_amp):
+            with torch.amp.autocast(enabled=use_amp):
                 pred = model(X_b)
                 loss = criterion(pred, Y_b)
             amp_scaler.scale(loss).backward()
@@ -302,7 +302,7 @@ def main():
             for X_b, Y_b in val_loader:
                 X_b = X_b.to(device, non_blocking=True)
                 Y_b = Y_b.to(device, non_blocking=True)
-                with torch.cuda.amp.autocast(enabled=use_amp):
+                with torch.amp.autocast(enabled=use_amp):
                     pred = model(X_b)
                     loss = criterion(pred, Y_b)
                 val_loss += loss.item() * len(X_b)
