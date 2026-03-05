@@ -1,82 +1,60 @@
-import os
-import sys
-import json
-import pickle
-import argparse
+import os, sys, json, pickle, argparse, time
 import numpy as np
 import pandas as pd
-
 import torch
 from torch.utils.data import Dataset, DataLoader, random_split
 from sklearn.preprocessing import StandardScaler
 
-# ── Import các module model ───────────────────────────────────────────────────
-try:
-    from fcn  import FCN
-    from loss import HomoscedasticPoseLoss
-except ImportError as e:
-    sys.exit(
-        f"[ERROR] Không tìm thấy module: {e}\n"
-        "Hãy đảm bảo fcn.py, cbam.py, resblock.py, loss.py "
-        "nằm cùng thư mục với train.py"
-    )
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+from fcn  import FCN
+from loss import HomoscedasticPoseLoss
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # CONFIG
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 def get_config():
-    parser = argparse.ArgumentParser(description="Train 5DoF Capsule Pose Model")
-
-    # Đường dẫn dữ liệu — chỉnh lại cho đúng với Drive của bạn
-    parser.add_argument("--voltage_dir",  type=str,
-                        default="/content/drive/MyDrive/ROI_voltage",
-                        help="Thư mục chứa ROI_voltage_1.csv … ROI_voltage_N.csv")
-    parser.add_argument("--label_dir",    type=str,
-                        default="/content/drive/MyDrive/ROI_data",
-                        help="Thư mục chứa ROI_data_1.csv … ROI_data_N.csv")
-    parser.add_argument("--ckpt_dir",     type=str,
-                        default="/content/drive/MyDrive/capsule_ckpt",
-                        help="Thư mục lưu checkpoint — nên đặt trên Drive")
-
-    # Hyperparameters
-    parser.add_argument("--num_files",    type=int,   default=20)
-    parser.add_argument("--batch_size",   type=int,   default=256,
-                        help="512 phù hợp với T4 16 GB + AMP")
-    parser.add_argument("--num_epochs",   type=int,   default=200)
-    parser.add_argument("--lr",           type=float, default=1e-3)
-    parser.add_argument("--weight_decay", type=float, default=1e-4)
-    parser.add_argument("--val_ratio",    type=float, default=0.1)
-    parser.add_argument("--save_every",   type=int,   default=5,
-                        help="Lưu checkpoint định kỳ mỗi N epoch")
-    parser.add_argument("--patience",     type=int,   default=30,
-                        help="Early stopping: dừng nếu val không giảm sau N epoch")
-    parser.add_argument("--num_workers",  type=int,   default=2)
-    parser.add_argument("--seed",         type=int,   default=42)
-    parser.add_argument("--csv_header",   action="store_true",
-                        help="Thêm flag này nếu file CSV có dòng header")
-
-    return parser.parse_args()
+    p = argparse.ArgumentParser()
+    p.add_argument("--voltage_dir",  type=str, default="/content/drive/MyDrive/Hallsensors_data/ROI_voltage")
+    p.add_argument("--label_dir",    type=str, default="/content/drive/MyDrive/Hallsensors_data/ROI_data")
+    p.add_argument("--ckpt_dir",     type=str, default="/content/drive/MyDrive/capsule_ckpt")
+    p.add_argument("--num_files",    type=int,   default=20)
+    p.add_argument("--batch_size",   type=int,   default=1024)
+    p.add_argument("--num_epochs",   type=int,   default=200)
+    p.add_argument("--lr",           type=float, default=1e-3)
+    p.add_argument("--weight_decay", type=float, default=1e-4)
+    p.add_argument("--val_ratio",    type=float, default=0.1)
+    p.add_argument("--save_every",   type=int,   default=5)
+    p.add_argument("--patience",     type=int,   default=30)
+    p.add_argument("--num_workers",  type=int,   default=2)
+    p.add_argument("--seed",         type=int,   default=42)
+    return p.parse_args()
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # DATASET
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
+
+def _auto_read_csv(path):
+
+    df = pd.read_csv(path, header=None, low_memory=False)
+    try:
+        df.iloc[0].astype(float)
+        has_header = False
+    except (ValueError, TypeError):
+        has_header = True
+
+    if has_header:
+        df = pd.read_csv(path, header=0, low_memory=False)
+
+    df = df.apply(pd.to_numeric, errors='coerce').dropna().reset_index(drop=True)
+    return df
+
 
 class CapsuleDataset(Dataset):
-    """
-    Đọc num_files cặp file CSV:
-        ROI_voltage_i.csv  →  (N, 64)  Hall sensor voltages
-        ROI_data_i.csv     →  (N,  5)  labels: x, y, z, roll, pitch
-
-    Normalize bằng StandardScaler, reshape voltage → (N, 1, 8, 8).
-    """
-
     def __init__(self, voltage_dir, label_dir, num_files,
-                 has_header=False, volt_scaler=None, label_scaler=None):
-
-        header = 0 if has_header else None
+                 volt_scaler=None, label_scaler=None):
         voltages, labels = [], []
 
         for i in range(1, num_files + 1):
@@ -84,31 +62,34 @@ class CapsuleDataset(Dataset):
             l_path = os.path.join(label_dir,   f"ROI_data_{i}.csv")
 
             if not os.path.exists(v_path):
-                raise FileNotFoundError(f"Không tìm thấy: {v_path}")
+                raise FileNotFoundError(f"Khong tim thay: {v_path}")
             if not os.path.exists(l_path):
-                raise FileNotFoundError(f"Không tìm thấy: {l_path}")
+                raise FileNotFoundError(f"Khong tim thay: {l_path}")
 
-            v_df = pd.read_csv(v_path, header=header)
-            l_df = pd.read_csv(l_path, header=header)
+            v_df = _auto_read_csv(v_path)
+            l_df = _auto_read_csv(l_path)
 
-            if len(v_df) != len(l_df):
+            # Can bang so hang neu lech <= 1 (header thua)
+            if abs(len(v_df) - len(l_df)) > 1:
                 raise ValueError(
-                    f"File {i}: voltage rows={len(v_df)}, label rows={len(l_df)}")
+                    f"File {i}: lech nhieu qua — voltage={len(v_df)}, label={len(l_df)}")
+            min_rows = min(len(v_df), len(l_df))
+            v_df = v_df.iloc[:min_rows]
+            l_df = l_df.iloc[:min_rows]
+
             if v_df.shape[1] != 64:
-                raise ValueError(
-                    f"File {i}: cần 64 voltage cols, nhận được {v_df.shape[1]}")
+                raise ValueError(f"File {i}: can 64 voltage cols, co {v_df.shape[1]}")
             if l_df.shape[1] != 5:
-                raise ValueError(
-                    f"File {i}: cần 5 label cols, nhận được {l_df.shape[1]}")
+                raise ValueError(f"File {i}: can 5 label cols, co {l_df.shape[1]}")
 
             voltages.append(v_df.values.astype(np.float32))
             labels.append(l_df.values.astype(np.float32))
+            print(f"  File {i:>2}: {min_rows:>7,} samples")
 
-        voltages = np.concatenate(voltages, axis=0)   # (N_total, 64)
-        labels   = np.concatenate(labels,   axis=0)   # (N_total,  5)
-        print(f"[Dataset] Tổng {len(voltages):,} samples từ {num_files} file pairs")
+        voltages = np.concatenate(voltages, axis=0)
+        labels   = np.concatenate(labels,   axis=0)
+        print(f"  Tong: {len(voltages):,} samples\n")
 
-        # Fit scaler nếu chưa có (training), dùng lại nếu đã có (inference)
         if volt_scaler is None:
             self.volt_scaler  = StandardScaler().fit(voltages)
             self.label_scaler = StandardScaler().fit(labels)
@@ -119,40 +100,30 @@ class CapsuleDataset(Dataset):
         voltages = self.volt_scaler.transform(voltages)
         labels   = self.label_scaler.transform(labels)
 
-        # Reshape (N, 64) → (N, 1, 8, 8) để đưa vào Conv2d
         self.X = torch.tensor(voltages, dtype=torch.float32).reshape(-1, 1, 8, 8)
         self.Y = torch.tensor(labels,   dtype=torch.float32)
 
-    def __len__(self):
-        return len(self.X)
-
-    def __getitem__(self, idx):
-        return self.X[idx], self.Y[idx]
+    def __len__(self):          return len(self.X)
+    def __getitem__(self, idx): return self.X[idx], self.Y[idx]
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # CHECKPOINT HELPERS
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
-def save_checkpoint(path, epoch, model, criterion,
-                    optimizer, scheduler, val_loss, best_val):
+def save_checkpoint(path, epoch, model, criterion, optimizer, scheduler,
+                    val_loss, best_val):
     torch.save({
-        "epoch":     epoch,
-        "model":     model.state_dict(),
-        "criterion": criterion.state_dict(),
-        "optimizer": optimizer.state_dict(),
-        "scheduler": scheduler.state_dict(),
-        "val_loss":  val_loss,
-        "best_val":  best_val,
+        "epoch": epoch, "model": model.state_dict(),
+        "criterion": criterion.state_dict(), "optimizer": optimizer.state_dict(),
+        "scheduler": scheduler.state_dict(), "val_loss": val_loss, "best_val": best_val,
     }, path)
 
 
 def load_checkpoint(path, model, criterion, optimizer, scheduler, device):
-    ckpt = torch.load(path, map_location=device)
-    # Xử lý prefix "_orig_mod." do torch.compile thêm vào state_dict
-    def strip(state):
-        return {k.replace("_orig_mod.", ""): v for k, v in state.items()}
-    model.load_state_dict(strip(ckpt["model"]))
+    ckpt  = torch.load(path, map_location=device)
+    state = {k.replace("_orig_mod.", ""): v for k, v in ckpt["model"].items()}
+    model.load_state_dict(state)
     criterion.load_state_dict(ckpt["criterion"])
     optimizer.load_state_dict(ckpt["optimizer"])
     scheduler.load_state_dict(ckpt["scheduler"])
@@ -160,48 +131,48 @@ def load_checkpoint(path, model, criterion, optimizer, scheduler, device):
 
 
 def append_log(log_file, entry):
-    """Ghi log từng epoch vào JSON (append, không ghi đè)."""
     log = []
     if os.path.exists(log_file):
         with open(log_file) as f:
-            try:
-                log = json.load(f)
-            except json.JSONDecodeError:
-                log = []
+            try:   log = json.load(f)
+            except json.JSONDecodeError: log = []
     log.append(entry)
     with open(log_file, "w") as f:
         json.dump(log, f, indent=2)
 
 
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 # MAIN
-# ══════════════════════════════════════════════════════════════════════════════
+# =============================================================================
 
 def main():
-    cfg = get_config()
+    cfg    = get_config()
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+    print("\n" + "=" * 60)
+    print("  5DoF Capsule Robot - Pose Estimation Training")
+    print("=" * 60)
+    gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
+    print(f"  Device : {device} ({gpu_name})")
+    print(f"  Epochs : {cfg.num_epochs}  Batch: {cfg.batch_size}  LR: {cfg.lr}")
+    print(f"  Ckpt   : {cfg.ckpt_dir}")
+    print("=" * 60 + "\n")
+
+    os.makedirs(cfg.ckpt_dir, exist_ok=True)
     torch.manual_seed(cfg.seed)
     np.random.seed(cfg.seed)
 
-    device = "cuda" if torch.cuda.is_available() else "cpu"
-    os.makedirs(cfg.ckpt_dir, exist_ok=True)
+    ckpt_latest = os.path.join(cfg.ckpt_dir, "latest.pt")
+    ckpt_best   = os.path.join(cfg.ckpt_dir, "best.pt")
+    log_file    = os.path.join(cfg.ckpt_dir, "train_log.json")
+    scaler_file = os.path.join(cfg.ckpt_dir, "scalers.pkl")
 
-    # ── In thông tin cấu hình ────────────────────────────────────────────────
-    gpu_name = torch.cuda.get_device_name(0) if device == "cuda" else "N/A"
-    print("=" * 62)
-    print("  Capsule Robot 5DoF — Pose Estimation Training")
-    print("=" * 62)
-    print(f"  Device      : {device}  ({gpu_name})")
-    print(f"  Epochs      : {cfg.num_epochs}  |  Batch : {cfg.batch_size}  |  LR : {cfg.lr}")
-    print(f"  Voltage dir : {cfg.voltage_dir}")
-    print(f"  Label dir   : {cfg.label_dir}")
-    print(f"  Ckpt dir    : {cfg.ckpt_dir}")
-    print("=" * 62 + "\n")
-
-    # ── Dataset & DataLoader ─────────────────────────────────────────────────
-    full_ds = CapsuleDataset(
-        cfg.voltage_dir, cfg.label_dir, cfg.num_files,
-        has_header=cfg.csv_header)
+    # Dataset
+    print("Loading dataset ...")
+    full_ds = CapsuleDataset(cfg.voltage_dir, cfg.label_dir, cfg.num_files)
+    with open(scaler_file, "wb") as f:
+        pickle.dump({"volt": full_ds.volt_scaler, "label": full_ds.label_scaler}, f)
+    print(f"Scalers saved -> {scaler_file}")
 
     n_total = len(full_ds)
     n_val   = max(1, int(cfg.val_ratio * n_total))
@@ -209,74 +180,52 @@ def main():
     train_ds, val_ds = random_split(
         full_ds, [n_train, n_val],
         generator=torch.Generator().manual_seed(cfg.seed))
+    print(f"Split -> train: {n_train:,}  val: {n_val:,}\n")
 
-    dl_kwargs = dict(
-        num_workers=cfg.num_workers,
-        pin_memory=(device == "cuda"),
-        persistent_workers=(cfg.num_workers > 0),
-    )
-    train_loader = DataLoader(
-        train_ds, batch_size=cfg.batch_size,
-        shuffle=True, drop_last=True, **dl_kwargs)
-    val_loader = DataLoader(
-        val_ds, batch_size=cfg.batch_size,
-        shuffle=False, **dl_kwargs)
+    pin = (device.type == "cuda")
+    train_loader = DataLoader(train_ds, batch_size=cfg.batch_size, shuffle=True,
+        num_workers=cfg.num_workers, pin_memory=pin, drop_last=True,
+        persistent_workers=(cfg.num_workers > 0))
+    val_loader   = DataLoader(val_ds, batch_size=cfg.batch_size, shuffle=False,
+        num_workers=cfg.num_workers, pin_memory=pin,
+        persistent_workers=(cfg.num_workers > 0))
 
-    print(f"[Dataset] Train={n_train:,}  |  Val={n_val:,}\n")
-
-    # Lưu scaler vào Drive để dùng lại khi inference
-    scaler_path = os.path.join(cfg.ckpt_dir, "scalers.pkl")
-    with open(scaler_path, "wb") as f:
-        pickle.dump({"volt":  full_ds.volt_scaler,
-                     "label": full_ds.label_scaler}, f)
-    print(f"[Scaler] Saved → {scaler_path}\n")
-
-    # ── Model, Loss, Optimizer, Scheduler ────────────────────────────────────
-    model     = FCN(out_dim=5).to(device)
-    criterion = HomoscedasticPoseLoss().to(device)
+    # Model
+    model      = FCN(out_dim=5).to(device)
+    criterion  = HomoscedasticPoseLoss().to(device)
     all_params = list(model.parameters()) + list(criterion.parameters())
-
-    optimizer = torch.optim.AdamW(
-        all_params, lr=cfg.lr, weight_decay=cfg.weight_decay)
-    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+    optimizer  = torch.optim.AdamW(all_params, lr=cfg.lr, weight_decay=cfg.weight_decay)
+    scheduler  = torch.optim.lr_scheduler.CosineAnnealingLR(
         optimizer, T_max=cfg.num_epochs, eta_min=1e-6)
 
-    # ── Đường dẫn checkpoint & log ───────────────────────────────────────────
-    ckpt_latest = os.path.join(cfg.ckpt_dir, "latest.pt")
-    ckpt_best   = os.path.join(cfg.ckpt_dir, "best.pt")
-    log_file    = os.path.join(cfg.ckpt_dir, "train_log.json")
+    try:
+        model = torch.compile(model)
+        print("torch.compile enabled")
+    except Exception:
+        print("torch.compile not available - skipping")
 
-    start_epoch = 1
-    best_val    = float("inf")
-
-    # ── Auto-resume nếu có checkpoint ────────────────────────────────────────
+    # Resume
+    start_epoch, best_val = 1, float("inf")
     if os.path.exists(ckpt_latest):
-        print(f"[Resume] Phát hiện checkpoint → {ckpt_latest}")
+        print(f"Resuming from {ckpt_latest} ...")
         start_epoch, best_val = load_checkpoint(
             ckpt_latest, model, criterion, optimizer, scheduler, device)
         start_epoch += 1
-        print(f"[Resume] Tiếp tục từ epoch {start_epoch}  |  best_val={best_val:.6f}\n")
+        print(f"  -> Epoch {start_epoch}  best_val={best_val:.6f}\n")
     else:
-        print("[Train] Không có checkpoint — bắt đầu từ đầu\n")
+        print("Training from scratch\n")
 
-    # ── torch.compile (PyTorch >= 2.0 → ~15-20% faster trên T4) ─────────────
-    try:
-        model = torch.compile(model)
-        print("[Compile] torch.compile enabled\n")
-    except Exception:
-        print("[Compile] torch.compile không khả dụng (PyTorch < 2.0), bỏ qua\n")
-
-    use_amp    = (device == "cuda")
-    amp_scaler = torch.cuda.amp.GradScaler(enabled=use_amp)
-
-    # ── Training loop ─────────────────────────────────────────────────────────
+    use_amp    = (device.type == "cuda")
+    amp_scaler = torch.amp.GradScaler(enabled=use_amp)
     no_improve = 0
-    print(f"{'Epoch':>6}  {'Train Loss':>11}  {'Val Loss':>10}  {'LR':>10}")
-    print("-" * 46)
+
+    print(f"{'Epoch':>6}  {'Train':>10}  {'Val':>10}  {'LR':>10}  {'Time':>7}")
+    print("-" * 52)
 
     for epoch in range(start_epoch, cfg.num_epochs + 1):
+        t0 = time.time()
 
-        # ── Train ─────────────────────────────────────────────────────────────
+        # Train
         model.train()
         train_loss = 0.0
         for X_b, Y_b in train_loader:
@@ -284,74 +233,61 @@ def main():
             Y_b = Y_b.to(device, non_blocking=True)
             optimizer.zero_grad(set_to_none=True)
             with torch.amp.autocast(enabled=use_amp):
-                pred = model(X_b)
-                loss = criterion(pred, Y_b)
+                loss = criterion(model(X_b), Y_b)
             amp_scaler.scale(loss).backward()
             amp_scaler.unscale_(optimizer)
-            torch.nn.utils.clip_grad_norm_(all_params, max_norm=1.0)
+            torch.nn.utils.clip_grad_norm_(all_params, 1.0)
             amp_scaler.step(optimizer)
             amp_scaler.update()
             train_loss += loss.item() * len(X_b)
         train_loss /= n_train
         scheduler.step()
 
-        # ── Validate ──────────────────────────────────────────────────────────
+        # Validate
         model.eval()
         val_loss = 0.0
         with torch.no_grad():
             for X_b, Y_b in val_loader:
                 X_b = X_b.to(device, non_blocking=True)
                 Y_b = Y_b.to(device, non_blocking=True)
-                with torch.amp.autocast(enabled=use_amp):
-                    pred = model(X_b)
-                    loss = criterion(pred, Y_b)
-                val_loss += loss.item() * len(X_b)
+                with torch.cuda.autocast(enabled=use_amp):
+                    val_loss += criterion(model(X_b), Y_b).item() * len(X_b)
         val_loss /= n_val
 
-        lr_now = optimizer.param_groups[0]["lr"]
-        marker = " *" if val_loss < best_val else ""
-        print(f"{epoch:>6}/{cfg.num_epochs}  "
-              f"{train_loss:>11.5f}  {val_loss:>10.5f}  "
-              f"{lr_now:>10.2e}{marker}", flush=True)
+        lr_now  = optimizer.param_groups[0]["lr"]
+        elapsed = time.time() - t0
+        print(f"{epoch:>6}  {train_loss:>10.5f}  {val_loss:>10.5f}  "
+              f"{lr_now:>10.2e}  {elapsed:>6.1f}s", flush=True)
 
-        # Ghi log JSON — append mỗi epoch, không ghi đè
-        append_log(log_file, {
-            "epoch": epoch,
-            "train": float(train_loss),
-            "val":   float(val_loss),
-            "lr":    float(lr_now),
-        })
+        append_log(log_file, {"epoch": epoch, "train": train_loss,
+                               "val": val_loss, "lr": lr_now})
 
-        # Lưu latest SAU MỖI EPOCH → resume an toàn khi Colab ngắt
+        # Save latest (moi epoch - an toan khi Colab ngat)
         save_checkpoint(ckpt_latest, epoch, model, criterion,
                         optimizer, scheduler, val_loss, best_val)
 
-        # Lưu best model
+        # Save best
         if val_loss < best_val:
-            best_val   = val_loss
-            no_improve = 0
+            best_val, no_improve = val_loss, 0
             save_checkpoint(ckpt_best, epoch, model, criterion,
                             optimizer, scheduler, val_loss, best_val)
-            print(f"         → Best model saved  (val={best_val:.5f})")
+            print(f"         >> Best saved (val={best_val:.6f})", flush=True)
         else:
             no_improve += 1
 
-        # Lưu checkpoint định kỳ (backup thêm)
+        # Save dinh ky
         if epoch % cfg.save_every == 0:
-            periodic_path = os.path.join(cfg.ckpt_dir, f"epoch_{epoch:04d}.pt")
-            save_checkpoint(periodic_path, epoch, model, criterion,
-                            optimizer, scheduler, val_loss, best_val)
+            save_checkpoint(os.path.join(cfg.ckpt_dir, f"epoch_{epoch:04d}.pt"),
+                            epoch, model, criterion, optimizer, scheduler,
+                            val_loss, best_val)
 
         # Early stopping
         if no_improve >= cfg.patience:
-            print(f"\n[EarlyStop] Dừng tại epoch {epoch} "
-                  f"— không cải thiện sau {cfg.patience} epochs")
+            print(f"\nEarly stopping (no improvement for {cfg.patience} epochs)")
             break
 
-    print(f"\n{'=' * 62}")
-    print(f"  Training hoàn tất!  Best val loss = {best_val:.6f}")
-    print(f"  Checkpoints → {cfg.ckpt_dir}")
-    print(f"{'=' * 62}")
+    print(f"\nDone! Best val loss = {best_val:.6f}")
+    print(f"Checkpoints -> {cfg.ckpt_dir}")
 
 
 if __name__ == "__main__":
