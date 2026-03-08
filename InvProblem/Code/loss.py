@@ -2,30 +2,23 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
-class HomoscedasticPoseLoss(nn.Module):
-    def __init__(self):
+
+class HuberPoseLoss(nn.Module):
+    def __init__(self,
+                 ang_weight: float = 0.006,
+                 delta_xyz:  float = 0.005,
+                 delta_ang:  float = 0.10):
+
         super().__init__()
-        self.log_sigma_xyz = nn.Parameter(torch.zeros(1))
-        self.log_sigma_ang = nn.Parameter(torch.zeros(1))
+        self.ang_weight = ang_weight
+        self.delta_xyz  = delta_xyz
+        self.delta_ang  = delta_ang
 
-    def forward(self, pred, target):
-        loss_xyz = F.mse_loss(
-            pred[:, :3],
-            target[:, :3],
-            reduction="mean"
-        )
+    def forward(self, pred: torch.Tensor, target: torch.Tensor):
 
-        loss_ang = F.mse_loss(
-            pred[:, 3:],
-            target[:, 3:],
-            reduction="mean"
-        )
-        
-        loss = (
-            torch.exp(-self.log_sigma_xyz) * loss_xyz
-            + self.log_sigma_xyz
-            + torch.exp(-self.log_sigma_ang) * loss_ang
-            + self.log_sigma_ang
-        )
-
-        return loss
+        loss_xyz = F.huber_loss(pred[:, :3], target[:, :3],
+                                delta=self.delta_xyz)
+        loss_ang = F.huber_loss(pred[:, 3:], target[:, 3:],
+                                delta=self.delta_ang)
+        total = loss_xyz + self.ang_weight * loss_ang
+        return total, loss_xyz, loss_ang
