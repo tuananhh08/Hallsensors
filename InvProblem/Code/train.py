@@ -12,7 +12,9 @@ from fcn  import FCN
 from loss import HuberPoseLoss
 
 
+# =============================================================================
 # CONFIG
+# =============================================================================
 
 def get_config():
     p = argparse.ArgumentParser()
@@ -26,11 +28,11 @@ def get_config():
     p.add_argument("--num_epochs",    type=int,   default=200)
     p.add_argument("--lr",            type=float, default=5e-4)
     p.add_argument("--weight_decay",  type=float, default=1e-3)
-    p.add_argument("--ang_weight",    type=float, default=0.006,
+    p.add_argument("--ang_weight",    type=float, default=1.0,
                    help="He so Huber(cos_pitch, cos_yaw) so voi Huber(xyz)")
-    p.add_argument("--delta_xyz",     type=float, default=0.005,
-                   help="Nguong Huber cho xyz (m), default=0.005 (0.5cm)")
-    p.add_argument("--delta_ang",     type=float, default=0.10,
+    p.add_argument("--delta_xyz",     type=float, default=0.14,
+                   help="Nguong Huber trong scaled space, default=0.14 (~0.005m/std_xyz)")
+    p.add_argument("--delta_ang",     type=float, default=0.14,
                    help="Nguong Huber cho cos angle, default=0.10 (~6 do)")
     p.add_argument("--warmup_epochs", type=int,   default=5)
     p.add_argument("--save_every",    type=int,   default=5)
@@ -40,7 +42,9 @@ def get_config():
     return p.parse_args()
 
 
+# =============================================================================
 # DATASET
+# =============================================================================
 
 def _auto_read_csv(path):
     """Doc CSV, tu dong detect header, ep float, drop hang NaN."""
@@ -57,7 +61,10 @@ def _auto_read_csv(path):
 
 
 class CapsuleDataset(Dataset):
-
+    """
+    Doc 1 cap file CSV (voltage + label).
+    Nhan scaler tu ngoai vao de train/val dung chung scaler.
+    """
     def __init__(self, voltage_path, label_path, volt_scaler, label_scaler):
         v_df = _auto_read_csv(voltage_path)
         l_df = _auto_read_csv(label_path)
@@ -87,11 +94,18 @@ class CapsuleDataset(Dataset):
 
 def build_datasets(voltage_dir, label_dir, num_files, val_files,
                    scaler_file, cache_dir, seed=42):
-
+    """
+    Split RANDOM theo file de tranh data leakage.
+    - Voltage : MinMaxScaler -> [0,1] (voltage tap trung ~1.65-1.76V,
+                std rat nho -> StandardScaler se scale len 300x -> NaN)
+    - Label   : StandardScaler (x,y,z,cos co scale khac nhau)
+    - Scaler fit CHI tren tap train.
+    - Cache moi file rieng de load nhanh lan sau.
+    """
     n_train_files = num_files - val_files
     os.makedirs(cache_dir, exist_ok=True)
 
-    # Random shuffle file indices theo seed 
+    # ── Random shuffle file indices theo seed ────────────────────────────────
     all_ids = list(range(1, num_files + 1))
     rng = np.random.default_rng(seed)
     rng.shuffle(all_ids)
@@ -115,7 +129,7 @@ def build_datasets(voltage_dir, label_dir, num_files, val_files,
     print(f"  Train files: {train_ids}")
     print(f"  Val   files: {val_ids}")
 
-    # ── Fit scaler CHI tren tap train 
+    # ── Fit scaler CHI tren tap train ────────────────────────────────────────
     if os.path.exists(scaler_file):
         print(f"  Loading scalers from {scaler_file}")
         with open(scaler_file, "rb") as f:
@@ -139,7 +153,7 @@ def build_datasets(voltage_dir, label_dir, num_files, val_files,
             pickle.dump({"volt": volt_scaler, "label": label_scaler}, f)
         print(f"  Scalers saved -> {scaler_file}")
 
-    # ── Load / cache tung file 
+    # ── Load / cache tung file ────────────────────────────────────────────────
     def load_file(i):
         cache_path = os.path.join(cache_dir, f"file_{i:02d}.pt")
         if os.path.exists(cache_path):
@@ -174,7 +188,10 @@ def build_datasets(voltage_dir, label_dir, num_files, val_files,
     print(f"\n  Total -> train: {len(train_ds):,}  val: {len(val_ds):,}\n")
     return train_ds, val_ds, volt_scaler, label_scaler
 
+
+# =============================================================================
 # CHECKPOINT HELPERS
+# =============================================================================
 
 def save_checkpoint(path, epoch, model, optimizer, scheduler, val_loss, best_val):
     torch.save({
@@ -213,7 +230,9 @@ def append_log(log_file, entry):
         json.dump(log, f, indent=2)
 
 
+# =============================================================================
 # MAIN
+# =============================================================================
 
 def main():
     cfg    = get_config()
@@ -243,7 +262,7 @@ def main():
     scaler_file = os.path.join(cfg.ckpt_dir, "scalers.pkl")
     cache_dir   = os.path.join(cfg.ckpt_dir, "file_cache")
 
-    # ── Dataset 
+    # ── Dataset ───────────────────────────────────────────────────────────────
     print("Loading dataset ...")
     train_ds, val_ds, volt_scaler, label_scaler = build_datasets(
         cfg.voltage_dir, cfg.label_dir,

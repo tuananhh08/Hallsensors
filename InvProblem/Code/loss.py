@@ -4,10 +4,11 @@ import torch.nn.functional as F
 
 
 class HuberPoseLoss(nn.Module):
+
     def __init__(self,
-                 ang_weight: float = 0.006,
-                 delta_xyz:  float = 0.005,
-                 delta_ang:  float = 0.10):
+                 ang_weight: float = 1.0,
+                 delta_xyz:  float = 0.14,
+                 delta_ang:  float = 0.14):
 
         super().__init__()
         self.ang_weight = ang_weight
@@ -15,7 +16,7 @@ class HuberPoseLoss(nn.Module):
         self.delta_ang  = delta_ang
 
     def forward(self, pred: torch.Tensor, target: torch.Tensor):
-
+ 
         loss_xyz = F.huber_loss(pred[:, :3], target[:, :3],
                                 delta=self.delta_xyz)
         loss_ang = F.huber_loss(pred[:, 3:], target[:, 3:],
