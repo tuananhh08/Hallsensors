@@ -1,5 +1,6 @@
 import numpy as np
 import pandas as pd
+import os
 
 #load input files
 # helical_df = pd.read_csv("Helical_points_coordinates.csv") #vi tri cac diem he Helical
@@ -26,25 +27,29 @@ z_min = sensor_center[2] + 0.025
 z_max = sensor_center[2] + roi_height
 
 #ROI
-num_xy = 25
+num_xy = 30
 num_z = 16
-num_angle = 20
+#num_angle = 20
 
 x_vals = np.linspace(x_min, x_max, num_xy)
 y_vals = np.linspace(y_min, y_max, num_xy)
 z_vals = np.linspace(z_min, z_max, num_z)
-pitch_vals = np.linspace(0,180, num_angle)
-yaw_vals = np.linspace(0,180,num_angle)
+# pitch_vals = np.linspace(0,180, num_angle)
+# yaw_vals = np.linspace(0,180,num_angle)
 
 num_files = 20
-columns = ["x", "y", "z", "cos_pitch", "cos_yaw"]
+columns = ["x", "y", "z", "cos_alpha", "cos_beta"]
 
 total_samples = (
-    len(x_vals) * len(y_vals) * len(z_vals) *
-    len(pitch_vals) * len(yaw_vals)
+    len(x_vals) * len(y_vals) * len(z_vals) 
+    # len(pitch_vals) * len(yaw_vals)
 )
 
 rows_per_file = total_samples // num_files
+
+# -------- Folder path --------
+output_folder = r"D:\Downloads\Hallsensors\InvProblem\Code\ROI_data"
+os.makedirs(output_folder, exist_ok=True)
 
 buffer = []
 file_idx = 1
@@ -53,27 +58,30 @@ counter = 0
 for x in x_vals:
     for y in y_vals:
         for z in z_vals:
-            for pitch in pitch_vals:
-                for yaw in yaw_vals:
-                    cos_pitch = np.cos(np.deg2rad(pitch))
-                    cos_yaw = np.cos(np.deg2rad(yaw))
 
-                    buffer.append([x, y, z, cos_pitch, cos_yaw])
-                    counter += 1
+            cos_alpha = 1
+            cos_beta = 1
 
-                    if counter % rows_per_file == 0:
-                        df = pd.DataFrame(buffer, columns=columns)
-                        df.to_csv(f"ROI_data_{file_idx}.csv", index=False)
-                        print(f"Saved ROI_data_{file_idx}.csv")
+            buffer.append([x, y, z, cos_alpha, cos_beta])
+            counter += 1
 
-                        buffer = []
-                        file_idx += 1
+            if counter % rows_per_file == 0:
+                df = pd.DataFrame(buffer, columns=columns)
+
+                file_path = os.path.join(output_folder, f"ROI_data_{file_idx}.csv")
+                df.to_csv(file_path, index=False)
+
+                print(f"Saved {file_path}")
+
+                buffer = []
+                file_idx += 1
 
 # write csv files
 if buffer:
     df = pd.DataFrame(buffer, columns=columns)
-    df.to_csv(f"ROI_data_{file_idx}.csv", index=False)
-    print(f"Saved ROI_data_{file_idx}.csv")
+    file_path = os.path.join(output_folder, f"ROI_data_{file_idx}.csv")
+    df.to_csv(file_path, index=False)
+    print(f"Saved {file_path}")
 
 print("Data generation completed.")
 
