@@ -73,7 +73,7 @@ class FCN(nn.Module):
         x = self.stage2(x)      
         x = self.downsample(x)  
         x = self.stage3(x)      
-        x = self.stage4(x)      # B x 64 x 4x4
+        x = self.stage4(x)      
 
         # Attention + pooling
         x = self.cbam(x)        
