@@ -14,7 +14,7 @@ class FCN(nn.Module):
             nn.BatchNorm2d(8),
             nn.LeakyReLU(0.01, inplace=True),
             ResBlock(8),
-            ResBlock(8),
+            ResBlock(8)
         )
 
         self.stage2 = nn.Sequential(
@@ -22,9 +22,8 @@ class FCN(nn.Module):
             nn.BatchNorm2d(16),
             nn.LeakyReLU(0.01, inplace=True),
             ResBlock(16),
-            ResBlock(16),
+            ResBlock(16)
         )
-
 
         self.downsample = nn.Sequential(
             nn.Conv2d(16, 16, 3, stride=2, padding=1, bias=False),

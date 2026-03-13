@@ -6,32 +6,32 @@ from pathlib import Path
 MU_0_4PI    = 1e-7              # mu0 / (4pi)
 VCC         = 3.3               # V
 V_Q         = VCC / 2           # 1.65 V (offset)
-SENSITIVITY = 15e-3 / 1e-3      # 15 mV/mT -> V/T
+SENSITIVITY = 7.5e-3 / 1e-3      # 15 mV/mT -> V/T
 m0          = 1.0
 
 # PATHS 
 BASE_DIR   = Path(__file__).parent
-sensor_pos = pd.read_csv(BASE_DIR / "Sensors_pos.csv").values
+sensor_pos = pd.read_csv(BASE_DIR / "Hall_sensor_positions.csv").values
 Ns         = sensor_pos.shape[0]
-print(f"Loaded {Ns} sensors from {BASE_DIR / 'Sensors_pos.csv'}")
+print(f"Loaded {Ns} sensors from {BASE_DIR / 'Hall_sensor_positions.csv'}")
 
-roi_folder = BASE_DIR   
+roi_folder = BASE_DIR  / "ROI_data"
 out_folder = BASE_DIR / "ROI_voltage"  
 out_folder.mkdir(parents=True, exist_ok=True)
 
 
 # FUNCTIONS
-def compute_m_vectors(cos_pitch, cos_yaw):
+def compute_m_vectors(cos_alpha, cos_beta):
     """
     Tinh vector moment tu truong tu cos_pitch va cos_yaw.
     sin >= 0 vi pitch, yaw trong [0, 180 deg].
     """
-    sin_pitch = np.sqrt(np.clip(1 - cos_pitch**2, 0, 1))
-    sin_yaw   = np.sqrt(np.clip(1 - cos_yaw**2,   0, 1))
+    sin_alpha = np.sqrt(np.clip(1 - cos_alpha**2, 0, 1))
+    sin_beta   = np.sqrt(np.clip(1 - cos_beta**2,   0, 1))
 
-    mx = m0 * cos_pitch * cos_yaw
-    my = m0 * cos_pitch * sin_yaw
-    mz = m0 * sin_pitch
+    mx = m0 * cos_alpha * cos_beta
+    my = m0 * cos_alpha * sin_beta
+    mz = m0 * sin_alpha
 
     return np.stack([mx, my, mz], axis=1)  # (N, 3)
 
@@ -60,7 +60,7 @@ def B_to_voltage(B):
 
 
 # MAIN
-num_files    = 20
+num_files    = 32
 total_clipped = 0
 total_rows    = 0
 
@@ -75,17 +75,17 @@ for i in range(1, num_files + 1):
     df = pd.read_csv(roi_file)
 
     roi_xyz   = df.iloc[:, :3].to_numpy()
-    cos_pitch = df["cos_pitch"].to_numpy()
-    cos_yaw   = df["cos_yaw"].to_numpy()
+    cos_alpha = df["cos_alpha"].to_numpy()
+    cos_beta   = df["cos_beta"].to_numpy()
 
     # Kiem tra khoang cach min de canh bao
     r_min = np.linalg.norm(
         roi_xyz[:, None, :] - sensor_pos[None, :, :], axis=2).min()
     if r_min < 0.005:
         print(f"  [WARNING] File {i}: khoang cach min toi sensor = {r_min*100:.2f} cm < 0.5cm")
-
+        
     # Tinh moment vector
-    m_vecs = compute_m_vectors(cos_pitch, cos_yaw)
+    m_vecs = compute_m_vectors(cos_alpha, cos_beta)
 
     # Tinh B
     B_all = compute_B_all(roi_xyz, sensor_pos, m_vecs)

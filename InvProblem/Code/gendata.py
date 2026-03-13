@@ -4,7 +4,7 @@ import os
 
 #load input files
 # helical_df = pd.read_csv("Helical_points_coordinates.csv") #vi tri cac diem he Helical
-sensor_df = pd.read_csv("Sensors_pos.csv") #vi tri 8x8 sensors
+sensor_df = pd.read_csv("Hall_sensor_positions.csv") #vi tri 8x8 sensors
 
 # helical_pts = helical_df.values
 sensor_pos = sensor_df.values
@@ -13,9 +13,9 @@ sensor_pos = sensor_df.values
 sensor_center = sensor_pos.mean(axis=0)
 
 #define ROI 
-roi_width = 0.145     #15cm
-roi_depth = 0.145     #15cm
-roi_height = 0.075    #7cm
+roi_width = 0.14     #14cm
+roi_depth = 0.14     #14cm
+roi_height = 0.07    #7cm
 
 x_min = sensor_center[0] - roi_width / 2
 x_max = sensor_center[0] + roi_width / 2
@@ -23,13 +23,13 @@ x_max = sensor_center[0] + roi_width / 2
 y_min = sensor_center[1] - roi_depth / 2
 y_max = sensor_center[1] + roi_depth / 2
 
-z_min = sensor_center[2] + 0.025
+z_min = sensor_center[2] + 0.01
 z_max = sensor_center[2] + roi_height
 
 #ROI
-num_xy = 30
-num_z = 16
-#num_angle = 20
+num_xy = 28
+num_z = 12
+#num_angle = 26
 
 x_vals = np.linspace(x_min, x_max, num_xy)
 y_vals = np.linspace(y_min, y_max, num_xy)
@@ -37,7 +37,7 @@ z_vals = np.linspace(z_min, z_max, num_z)
 # pitch_vals = np.linspace(0,180, num_angle)
 # yaw_vals = np.linspace(0,180,num_angle)
 
-num_files = 20
+num_files = 32
 columns = ["x", "y", "z", "cos_alpha", "cos_beta"]
 
 total_samples = (
