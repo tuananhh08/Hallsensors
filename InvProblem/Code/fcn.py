@@ -28,16 +28,9 @@ class FCN(nn.Module):
         )
         self.cbam = CBAM(16)
         
-        #16x4x4
-        self.downsample = nn.Sequential(
-            nn.Conv2d(16, 16, 3, stride=2, padding=1, bias=False),
-            nn.BatchNorm2d(16),
-            nn.LeakyReLU(0.01, inplace=True),
-        )
-
         #stage3: 32x4x4
         self.stage3 = nn.Sequential(
-            nn.Conv2d(16, 32, 3, padding=1, bias=False),
+            nn.Conv2d(16, 32, 3, stride = 2, padding=1, bias=False),
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.01, inplace=True),
             ResBlock(32),
@@ -78,15 +71,14 @@ class FCN(nn.Module):
         x = self.stage1(x)      
         x = self.stage2(x) 
         x = self.cbam(x)     
-        x = self.downsample(x)  
         x = self.stage3(x)      
         x = self.stage4(x)      
 
         # Attention + pooling
         x = self.ca(x)        
         x = self.pool(x)       
-        x = self.flatten(1)
-        
+        x = x.flatten(1)
+
         # Shared MLP
         feat = self.shared(x)   
 
