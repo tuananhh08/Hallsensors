@@ -27,9 +27,9 @@ z_min = sensor_center[2] + 0.01
 z_max = sensor_center[2] + roi_height
 
 #ROI
-num_xy = 28
-num_z = 12
-#num_angle = 26
+num_xy = 28     #26
+num_z = 12      
+#num_angle = 26 
 
 x_vals = np.linspace(x_min, x_max, num_xy)
 y_vals = np.linspace(y_min, y_max, num_xy)
