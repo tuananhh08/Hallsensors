@@ -36,12 +36,14 @@ class FCN(nn.Module):
             nn.BatchNorm2d(32),
             nn.LeakyReLU(0.01, inplace=True),
             ResBlock(32),
+            ResBlock(32)
         )
 
         self.stage4 = nn.Sequential(
             nn.Conv2d(32, 64, 3, padding=1, bias=False),
             nn.BatchNorm2d(64),
             nn.LeakyReLU(0.01, inplace=True),
+            ResBlock(64)
         )
 
         self.cbam = CBAM(64)
