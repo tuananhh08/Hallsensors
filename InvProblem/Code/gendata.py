@@ -3,7 +3,6 @@ import pandas as pd
 import os
 
 #load input files
-# helical_df = pd.read_csv("Helical_points_coordinates.csv") #vi tri cac diem he Helical
 sensor_df = pd.read_csv("Hall_sensor_positions.csv") #vi tri 8x8 sensors
 
 # helical_pts = helical_df.values
