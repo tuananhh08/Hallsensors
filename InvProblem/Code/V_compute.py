@@ -1,43 +1,171 @@
+# import numpy as np
+# import pandas as pd
+# from pathlib import Path
+
+# # CONSTANTS
+# MU_0_4PI = 1e-7   # mu0 / (4pi)
+# VCC      = 3.3    # V
+# m0       = 1.0
+
+# # PATHS
+# BASE_DIR   = Path(__file__).parent
+# sensor_pos = pd.read_csv(BASE_DIR / "Hall_sensor_positions.csv").values
+# Ns         = sensor_pos.shape[0]
+# print(f"Loaded {Ns} sensors from {BASE_DIR / 'Hall_sensor_positions.csv'}")
+
+# # Load calibration 
+# calib_df = pd.read_csv(BASE_DIR / "Calibration_grid_result.csv")
+# calib_df = calib_df.sort_values("sensor_index").reset_index(drop=True)
+
+# assert len(calib_df) == Ns, \
+#     f"So sensor trong calibration ({len(calib_df)}) != sensor_pos ({Ns})"
+
+# V_Q_arr  = calib_df["offset_a_V"].to_numpy()       # (Ns,)
+# GAIN_arr = calib_df["gain_g_V_per_T"].to_numpy()   # (Ns,)
+
+# print(f"Calibration loaded: {len(calib_df)} sensors")
+# print(f"  V_Q   range: [{V_Q_arr.min():.4f}, {V_Q_arr.max():.4f}] V")
+# print(f"  Gain  range: [{GAIN_arr.min():.4f}, {GAIN_arr.max():.4f}] V/T")
+
+# input_file = BASE_DIR / "Grid_points_coordinates.csv"
+# out_file   = BASE_DIR / "Grid_voltage.csv"
+
+
+# # FUNCTIONS
+# def compute_m_vectors(cos_alpha, cos_beta):
+#     """
+#     Tinh vector moment tu truong tu cos_alpha va cos_beta.
+#     sin >= 0 vi alpha, beta trong [0, 180 deg].
+#     m = [1, 0, 0] khi cos_alpha=1, cos_beta=1.
+#     """
+#     sin_alpha = np.sqrt(np.clip(1 - cos_alpha**2, 0, 1))
+#     sin_beta  = np.sqrt(np.clip(1 - cos_beta**2,  0, 1))
+
+#     mx = m0 * cos_alpha * cos_beta
+#     my = m0 * cos_alpha * sin_beta
+#     mz = m0 * sin_alpha
+
+#     return np.stack([mx, my, mz], axis=1)   # (N, 3)
+
+
+# def compute_B_all(roi_xyz, sensor_pos, m_vecs):
+
+#     r_vec  = sensor_pos[None, :, :] - roi_xyz[:, None, :]   # (N, Ns, 3)
+#     r_norm = np.linalg.norm(r_vec, axis=2, keepdims=True)
+#     r_norm = np.clip(r_norm, 1e-4, None)                     # tranh singularity
+
+#     m_dot_r = np.sum(m_vecs[:, None, :] * r_vec, axis=2, keepdims=True)
+
+#     term1 = 3 * m_dot_r * r_vec / (r_norm ** 5)
+#     term2 = m_vecs[:, None, :] / (r_norm ** 3)
+
+#     B_vec = MU_0_4PI * (term1 - term2)   # (N, Ns, 3)
+#     Bz    = B_vec[:, :, 2]               # (N, Ns) — chi lay thanh phan z
+
+#     return Bz
+
+
+# def B_to_voltage(Bz, V_Q_arr, GAIN_arr):
+#     """
+#     V = V_Q[s] + GAIN[s] * Bz[s]
+#     Bz va GAIN deu co dau — phan anh dung vat ly cam bien Hall.
+#     """
+#     return V_Q_arr[None, :] + GAIN_arr[None, :] * Bz
+
+
+# # MAIN
+# print(f"\nProcessing {input_file.name} ...")
+# df = pd.read_csv(input_file)
+
+# roi_xyz   = df.iloc[:, :3].to_numpy()
+# cos_alpha = df["cos_alpha"].to_numpy()
+# cos_beta  = df["cos_beta"].to_numpy()
+
+# # Kiem tra khoang cach min
+# r_min = np.linalg.norm(
+#     roi_xyz[:, None, :] - sensor_pos[None, :, :], axis=2).min()
+# if r_min < 0.005:
+#     print(f"[WARNING] Khoang cach min toi sensor = {r_min*100:.2f} cm < 0.5cm")
+
+# # Tinh moment vector
+# m_vecs = compute_m_vectors(cos_alpha, cos_beta)
+
+# # Tinh Bz
+# Bz = compute_B_all(roi_xyz, sensor_pos, m_vecs)
+
+# # Chuyen sang Voltage
+# V_all = B_to_voltage(Bz, V_Q_arr, GAIN_arr)
+
+# # Clip ve [0, VCC]
+# n_clipped = np.sum((V_all < 0) | (V_all > VCC))
+# V_all     = np.clip(V_all, 0, VCC)
+
+# pd.DataFrame(V_all).to_csv(out_file, header=False, index=False)
+
+# print(f"  Samples  : {len(df):,}")
+# print(f"  V range  : [{V_all.min():.4f}, {V_all.max():.4f}] V")
+# print(f"  Clipped  : {n_clipped:,} / {V_all.size:,} ({100*n_clipped/V_all.size:.2f}%)")
+# print(f"\nDONE — Output -> {out_file}")
+
+
+"""
+compute_grid_voltage.py
+Tinh voltage tu file Grid_points_coordinates.csv voi:
+  - Vcc = 3.3 V
+  - V_Q = Vcc / 2 = 1.65 V (offset chung)
+  - Sensitivity = 7.5 mV/mT = 7.5e-3 / 1e-3 = 7.5 V/T (chung cho tat ca sensor)
+  - B chi lay thanh phan Bz (theo truc z cua sensor)
+  - m = [1, 0, 0] khi cos_alpha = cos_beta = 1
+
+Output: Grid_voltage.csv (khong header, moi dong la 64 gia tri voltage)
+
+"""
+
+import argparse
 import numpy as np
 import pandas as pd
 from pathlib import Path
 
-# CONSTANTS
-MU_0_4PI = 1e-7   # mu0 / (4pi)
-VCC      = 3.3    # V
-m0       = 1.0
+# ─── Constants 
+MU_0_4PI    = 1e-7              
+VCC         = 3.3                
+V_Q         = VCC / 2            
+SENSITIVITY = 7.5e-3 / 1e-3     
+m0          = 1.0
 
-# PATHS
-BASE_DIR   = Path(__file__).parent
-sensor_pos = pd.read_csv(BASE_DIR / "Hall_sensor_positions.csv").values
-Ns         = sensor_pos.shape[0]
-print(f"Loaded {Ns} sensors from {BASE_DIR / 'Hall_sensor_positions.csv'}")
+# ─── Args 
+parser = argparse.ArgumentParser()
+parser.add_argument("--coords",  default="Grid_points_coordinates.csv",
+                    help="File toa do robot (x,y,z,cos_alpha,cos_beta)")
+parser.add_argument("--sensors", default="Hall_sensor_positions.csv",
+                    help="File vi tri 64 cam bien Hall")
+parser.add_argument("--out",     default="Grid_voltage_no_calib.csv",
+                    help="File output voltage")
+args = parser.parse_args()
 
-# Load calibration 
-calib_df = pd.read_csv(BASE_DIR / "Calibration_grid_result.csv")
-calib_df = calib_df.sort_values("sensor_index").reset_index(drop=True)
+BASE_DIR = Path(__file__).parent
 
-assert len(calib_df) == Ns, \
-    f"Số sensor trong calibration ({len(calib_df)}) != sensor_pos ({Ns})"
+# ─── Load data 
+print(f"Loading sensor positions from {args.sensors} ...")
+sensor_pos = pd.read_csv(BASE_DIR / args.sensors).values   # (64, 3)
+Ns = sensor_pos.shape[0]
+print(f"  Loaded {Ns} sensors")
 
-# Shape (Ns,) 
-V_Q_arr  = calib_df["offset_a_V"].to_numpy()       # V_Q riêng từng sensor
-GAIN_arr = calib_df["gain_g_V_per_T"].to_numpy()   # sensitivity riêng từng sensor
-
-print(f"Calibration loaded: {len(calib_df)} sensors")
-print(f"  V_Q   range: [{V_Q_arr.min():.4f}, {V_Q_arr.max():.4f}] V")
-print(f"  Gain  range: [{GAIN_arr.min():.4f}, {GAIN_arr.max():.4f}] V/T")
-
-roi_folder = BASE_DIR / "ROI_data"
-out_folder = BASE_DIR / "ROI_voltage"
-out_folder.mkdir(parents=True, exist_ok=True)
+print(f"Loading coordinates from {args.coords} ...")
+coord_df  = pd.read_csv(BASE_DIR / args.coords)
+roi_xyz   = coord_df[["x", "y", "z"]].values              # (N, 3)
+cos_alpha = coord_df["cos_alpha"].values                   # (N,)
+cos_beta  = coord_df["cos_beta"].values                    # (N,)
+N = len(roi_xyz)
+print(f"  Loaded {N} poses")
 
 
-# FUNCTIONS
+# Functions 
 def compute_m_vectors(cos_alpha, cos_beta):
     """
-    Tinh vector moment tu truong tu cos_alpha va cos_beta.
-    sin >= 0 vi alpha, beta trong [0, 180 deg].
+    Tinh vector moment tu truong m tu cos_alpha va cos_beta.
+    sin >= 0 vi alpha, beta thuoc [0, 180 deg].
+    Khi cos_alpha=1, cos_beta=1 -> m = [1, 0, 0].
     """
     sin_alpha = np.sqrt(np.clip(1 - cos_alpha**2, 0, 1))
     sin_beta  = np.sqrt(np.clip(1 - cos_beta**2,  0, 1))
@@ -49,91 +177,69 @@ def compute_m_vectors(cos_alpha, cos_beta):
     return np.stack([mx, my, mz], axis=1)   # (N, 3)
 
 
-def compute_B_all(roi_xyz, sensor_pos, m_vecs):
+def compute_Bz(roi_xyz, sensor_pos, m_vecs):
     """
-    Tinh do lon cam ung tu B tai tung sensor tu cong thuc dipole.
-    Returns: B_mag (N, Ns)
+    Tinh thanh phan Bz (theo truc z) tai tung sensor tu cong thuc dipole.
+    Chi lay Bz vi cam bien Hall chi nhaycam voi thanh phan B doc truc cam bien.
+
     """
-    # r_vec: (N, Ns, 3)
-    r_vec  = sensor_pos[None, :, :] - roi_xyz[:, None, :]
+    r_vec  = sensor_pos[None, :, :] - roi_xyz[:, None, :]  # (N, Ns, 3)
     r_norm = np.linalg.norm(r_vec, axis=2, keepdims=True)
-    r_norm = np.clip(r_norm, 1e-4, None)   # tranh singularity
+    r_norm = np.clip(r_norm, 1e-4, None)                    # tranh singularity < 0.1mm
 
     m_dot_r = np.sum(m_vecs[:, None, :] * r_vec, axis=2, keepdims=True)
 
     term1 = 3 * m_dot_r * r_vec / (r_norm ** 5)
     term2 = m_vecs[:, None, :] / (r_norm ** 3)
 
-    B_vec = MU_0_4PI * (term1 - term2)
-    B_mag = np.linalg.norm(B_vec, axis=2)   # (N, Ns)
+    B_vec = MU_0_4PI * (term1 - term2)   
+    Bz    = B_vec[:, :, 2]               
 
-    return B_mag
+    return Bz
 
 
-def B_to_voltage(B_mag, V_Q_arr, GAIN_arr):
+def Bz_to_voltage(Bz):
     """
-    Chuyen B sang voltage dung tham so calibration rieng tung sensor.
-    V = V_Q[s] + GAIN[s] * B[s]
-
-    Args:
-        B_mag   : (N, Ns)
-        V_Q_arr : (Ns,)  — offset rieng tung sensor
-        GAIN_arr: (Ns,)  — gain rieng tung sensor
-    Returns:
-        V_all   : (N, Ns)
+    V = V_Q + SENSITIVITY * Bz
+    Sensitivity chung cho tat ca sensor: 7.5 V/T
     """
-    return V_Q_arr[None, :] + GAIN_arr[None, :] * B_mag
+    return V_Q + SENSITIVITY * Bz
 
 
-# MAIN
-num_files     = 32
-total_clipped = 0
-total_rows    = 0
+# ─── Main 
+print("\nComputing magnetic moment vectors ...")
+m_vecs = compute_m_vectors(cos_alpha, cos_beta)
 
-for i in range(1, num_files + 1):
-    roi_file = roi_folder / f"ROI_data_{i}.csv"
-    out_file = out_folder / f"ROI_voltage_{i}.csv"
+# Kiem tra m vector voi mau dau tien
+print(f"  m[0] = [{m_vecs[0,0]:.4f}, {m_vecs[0,1]:.4f}, {m_vecs[0,2]:.4f}]"
+      f"  (ky vong [1,0,0] khi cos_alpha=cos_beta=1)")
 
-    if not roi_file.exists():
-        print(f"[WARNING] Khong tim thay {roi_file} — bo qua")
-        continue
+print("Computing Bz at all sensors ...")
+Bz = compute_Bz(roi_xyz, sensor_pos, m_vecs)   # (N, 64)
+print(f"  Bz range: [{Bz.min():.6f}, {Bz.max():.6f}] T")
 
-    df = pd.read_csv(roi_file)
+print("Converting Bz to voltage ...")
+V_all = Bz_to_voltage(Bz)                       # (N, 64)
 
-    roi_xyz   = df.iloc[:, :3].to_numpy()
-    cos_alpha = df["cos_alpha"].to_numpy()
-    cos_beta  = df["cos_beta"].to_numpy()
+# Kiem tra khoang cach min
+r_min = np.linalg.norm(
+    roi_xyz[:, None, :] - sensor_pos[None, :, :], axis=2).min()
+if r_min < 0.005:
+    print(f"  [WARNING] Khoang cach min toi sensor = {r_min*100:.2f} cm < 0.5cm")
 
-    # Kiem tra khoang cach min
-    r_min = np.linalg.norm(
-        roi_xyz[:, None, :] - sensor_pos[None, :, :], axis=2).min()
-    if r_min < 0.005:
-        print(f"  [WARNING] File {i}: khoang cach min = {r_min*100:.2f} cm < 0.5cm")
+# Clip ve [0, VCC] — sensor vat ly bi bao hoa
+n_clipped = np.sum((V_all < 0) | (V_all > VCC))
+V_all     = np.clip(V_all, 0, VCC)
 
-    # Tinh moment vector
-    m_vecs = compute_m_vectors(cos_alpha, cos_beta)
+print(f"\n─── Ket qua ─────────────────────────────────")
+print(f"  Samples  : {N:,}")
+print(f"  V range  : [{V_all.min():.4f}, {V_all.max():.4f}] V")
+print(f"  V_Q      : {V_Q} V  |  Sensitivity: {SENSITIVITY} V/T")
+print(f"  Clipped  : {n_clipped:,} / {V_all.size:,} "
+      f"({100*n_clipped/V_all.size:.2f}%)")
+print(f"─────────────────────────────────────────────")
 
-    # Tinh B
-    B_all = compute_B_all(roi_xyz, sensor_pos, m_vecs)
-
-    # Chuyen sang Voltage dung calibration rieng tung sensor
-    V_all = B_to_voltage(B_all, V_Q_arr, GAIN_arr)
-
-    # Clip ve [0, VCC]
-    n_clipped     = np.sum((V_all < 0) | (V_all > VCC))
-    V_all         = np.clip(V_all, 0, VCC)
-    total_clipped += n_clipped
-    total_rows    += V_all.size
-
-    pd.DataFrame(V_all).to_csv(out_file, header=False, index=False)
-
-    print(f"  File {i:>2}: {len(df):>7,} samples  "
-          f"V=[{V_all.min():.4f}, {V_all.max():.4f}]  "
-          f"clipped={n_clipped:,} ({100*n_clipped/V_all.size:.2f}%)")
-
-print(
-    f"\nDONE — Total clipped: {total_clipped:,} / {total_rows:,} "
-    f"({100*total_clipped/total_rows:.2f}%)" if total_rows > 0
-    else "\nDONE — Khong co file nao duoc xu ly."
-)
-print(f"Output -> {out_folder}")
+# Save — khong header, khong index
+out_path = BASE_DIR / args.out
+pd.DataFrame(V_all).to_csv(out_path, header=False, index=False)
+print(f"\nSaved -> {out_path}")
