@@ -7,7 +7,7 @@ class HuberPoseLoss(nn.Module):
 
     def __init__(self,
                  ang_weight: float = 1.0,
-                 delta_xyz:  float = 0.14,
+                 delta_xyz:  float = 0.08,
                  delta_ang:  float = 0.14):
 
         super().__init__()
