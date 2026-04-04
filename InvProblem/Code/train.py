@@ -349,14 +349,14 @@ def get_config():
                    help="Ti le validation (default=0.2 tuc 80/20)")
     p.add_argument("--batch_size",   type=int,   default=64)
     p.add_argument("--num_epochs",   type=int,   default=200)
-    p.add_argument("--lr",           type=float, default=3.5e-4)
-    p.add_argument("--weight_decay", type=float, default=5e-3)
+    p.add_argument("--lr",           type=float, default=0.0097)
+    p.add_argument("--weight_decay", type=float, default=0.0032)
     p.add_argument("--ang_weight",   type=float, default=1.0)
-    p.add_argument("--delta_xyz",    type=float, default=0.14)
-    p.add_argument("--delta_ang",    type=float, default=0.14)
+    p.add_argument("--delta_xyz",    type=float, default=0.055)
+    p.add_argument("--delta_ang",    type=float, default=0.16)
     p.add_argument("--warmup_epochs",type=int,   default=5)
     p.add_argument("--save_every",   type=int,   default=5)
-    p.add_argument("--patience",     type=int,   default=50)
+    p.add_argument("--patience",     type=int,   default=40)
     p.add_argument("--seed",         type=int,   default=42)
     return p.parse_args()
 
@@ -473,7 +473,7 @@ def main():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     print("\n" + "=" * 65)
-    print("  ResCBAM-FCN — Pose Estimation Training")
+    print("  Model cu Training")
     print("=" * 65)
     gpu_name = torch.cuda.get_device_name(0) if device.type == "cuda" else "CPU"
     print(f"  Device      : {device} ({gpu_name})")

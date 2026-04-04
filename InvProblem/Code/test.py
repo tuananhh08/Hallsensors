@@ -4,6 +4,7 @@ import pandas as pd
 import torch
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D  # noqa: F401
+import csv
 
 # ─── Args ─────────────────────────────────────────────────────────────────────
 parser = argparse.ArgumentParser()
@@ -95,11 +96,31 @@ with torch.no_grad():
 pred_full = label_scaler.inverse_transform(pred_scaled)         # (N, 5)
 pred_xyz  = pred_full[:, :3]                                    # (N, 3)
 
-print("\n  Sample pred (first 3 points):")
-for i in range(min(3, len(pred_xyz))):
-    print(f"    [{i}] pred=({pred_xyz[i,0]:.4f}, {pred_xyz[i,1]:.4f}, {pred_xyz[i,2]:.4f})"
-          f"  gt=({gt_xyz[i,0]:.4f}, {gt_xyz[i,1]:.4f}, {gt_xyz[i,2]:.4f})")
-
+print(f"\n  {'Point':<8} {'Pred X':>10} {'Pred Y':>10} {'Pred Z':>10} {'GT X':>10} {'GT Y':>10} {'GT Z':>10} {'Err(mm)':>10}")
+print("  " + "-" * 78)
+for i in range(len(pred_xyz)):
+    err = np.linalg.norm(pred_xyz[i] - gt_xyz[i]) * 1000
+    print(f"  {i:<8} "
+          f"{pred_xyz[i,0]:>10.4f} {pred_xyz[i,1]:>10.4f} {pred_xyz[i,2]:>10.4f} "
+          f"{gt_xyz[i,0]:>10.4f} {gt_xyz[i,1]:>10.4f} {gt_xyz[i,2]:>10.4f} "
+          f"{err:>10.2f}")
+csv_path = os.path.join(args.ckpt_dir, "testresult.csv")
+with open(csv_path, "w", newline="") as f:
+    writer = csv.writer(f)
+    writer.writerow(["Point", "Pred_X", "Pred_Y", "Pred_Z", "GT_X", "GT_Y", "GT_Z", "Err_mm"])
+    for i in range(len(pred_xyz)):
+        err = np.linalg.norm(pred_xyz[i] - gt_xyz[i]) * 1000
+        writer.writerow([
+            i,
+            round(float(pred_xyz[i, 0]), 4),
+            round(float(pred_xyz[i, 1]), 4),
+            round(float(pred_xyz[i, 2]), 4),
+            round(float(gt_xyz[i, 0]), 4),
+            round(float(gt_xyz[i, 1]), 4),
+            round(float(gt_xyz[i, 2]), 4),
+            round(float(err), 2),
+        ])
+print(f"Saved CSV: {csv_path}")
 # ─── Metrics ──────────────────────────────────────────────────────────────────
 errors   = np.linalg.norm(pred_xyz - gt_xyz, axis=1)
 mae_xyz  = np.abs(pred_xyz - gt_xyz).mean(axis=0)
